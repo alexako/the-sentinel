@@ -12,7 +12,7 @@ sentinel:
   
   # Network configuration
   orchestrator:
-    host: "192.168.1.100"  # Replace with orchestrator IP
+    host: "theserver.tail054cdb.ts.net"  # Tailscale MagicDNS hostname
     port: 8080
     endpoint: "/wake"
     timeout: 5.0
