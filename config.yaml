@@ -1,0 +1,23 @@
+sentinel:
+  # Wake word configuration
+  wake_words:
+    - "nexus"   # Custom model in ../shared/wake_words/nexus.ppn
+    # - "alan"  # TODO: Add when alan.ppn model is available
+  
+  # Audio configuration
+  audio:
+    sample_rate: 16000
+    frame_length: 512
+    device_index: null  # null = default device
+  
+  # Network configuration
+  orchestrator:
+    host: "192.168.1.100"  # Replace with orchestrator IP
+    port: 8080
+    endpoint: "/wake"
+    timeout: 5.0
+  
+  # Location identification
+  location:
+    room: "kitchen"  # Unique identifier for this sentinel
+    description: "Kitchen Pi Sentinel"
