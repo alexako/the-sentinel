@@ -9,13 +9,15 @@ import time
 import asyncio
 import threading
 import wave
+import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import uvicorn
+import aiofiles
 
 class WakeWordSentinel:
     def __init__(self, config_path: str = "config.yaml"):
@@ -183,12 +185,25 @@ class RecordingResponse(BaseModel):
     message: str
     file_path: Optional[str] = None
 
+class PlaybackRequest(BaseModel):
+    session_id: str
+    location: str
+    volume: float = 0.7
+
+class PlaybackResponse(BaseModel):
+    session_id: str
+    status: str
+    message: str
+    location: str
+
 class SentinelAPI:
     def __init__(self, sentinel: WakeWordSentinel):
         self.sentinel = sentinel
         self.app = FastAPI(title="ALAN Sentinel Audio API")
         self.recordings_dir = Path("recordings")
         self.recordings_dir.mkdir(exist_ok=True)
+        self.playback_dir = Path("playback")
+        self.playback_dir.mkdir(exist_ok=True)
         
         # Setup logging
         self.logger = logging.getLogger(__name__)
@@ -241,6 +256,47 @@ class SentinelAPI:
             except Exception as e:
                 self.logger.error(f"Recording failed: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
+        
+        @self.app.post("/play", response_model=PlaybackResponse)
+        async def play_audio(
+            audio_file: UploadFile = File(...),
+            session_id: str = None,
+            location: str = "unknown",
+            volume: float = 0.7
+        ):
+            """Receive and play audio file from Voice service"""
+            try:
+                # Generate session_id if not provided
+                if not session_id:
+                    session_id = f"play_{int(time.time())}"
+                
+                self.logger.info(f"Playback request: {session_id} for {location} (volume: {volume})")
+                
+                # Save uploaded audio file
+                playback_file = self.playback_dir / f"{session_id}.wav"
+                
+                async with aiofiles.open(playback_file, 'wb') as f:
+                    content = await audio_file.read()
+                    await f.write(content)
+                
+                self.logger.info(f"Audio file saved: {playback_file} ({len(content)} bytes)")
+                
+                # Play the audio file
+                success = await self.play_audio_file(playback_file, volume)
+                
+                if success:
+                    return PlaybackResponse(
+                        session_id=session_id,
+                        status="success",
+                        message=f"Audio played successfully at {location}",
+                        location=location
+                    )
+                else:
+                    raise HTTPException(status_code=500, detail="Audio playback failed")
+                    
+            except Exception as e:
+                self.logger.error(f"Playback failed: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
     
     async def record_audio_clip(self, session_id: str, duration: float, sample_rate: int) -> Optional[Path]:
         """Record audio clip using the same PyAudio setup as wake word detection"""
@@ -291,6 +347,70 @@ class SentinelAPI:
         except Exception as e:
             self.logger.error(f"Audio recording failed: {e}")
             return None
+    
+    async def play_audio_file(self, audio_file: Path, volume: float = 0.7) -> bool:
+        """Play audio file using system audio player"""
+        try:
+            if not audio_file.exists():
+                self.logger.error(f"Audio file not found: {audio_file}")
+                return False
+            
+            # Try multiple audio players in order of preference
+            players = ['aplay', 'paplay', 'cvlc', 'mpg123', 'ffplay']
+            
+            for player in players:
+                if await self._check_command_exists(player):
+                    self.logger.info(f"Playing audio with {player}: {audio_file}")
+                    
+                    # Build command based on player
+                    if player == 'aplay':
+                        cmd = ['aplay', str(audio_file)]
+                    elif player == 'paplay':
+                        cmd = ['paplay', '--volume', str(int(volume * 65536)), str(audio_file)]
+                    elif player == 'cvlc':
+                        cmd = ['cvlc', '--play-and-exit', '--intf', 'dummy', str(audio_file)]
+                    elif player == 'mpg123':
+                        cmd = ['mpg123', '-q', str(audio_file)]
+                    elif player == 'ffplay':
+                        cmd = ['ffplay', '-nodisp', '-autoexit', '-v', 'quiet', str(audio_file)]
+                    else:
+                        continue
+                    
+                    # Execute playback command
+                    process = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+                    
+                    stdout, stderr = await process.communicate()
+                    
+                    if process.returncode == 0:
+                        self.logger.info(f"Audio playback successful with {player}")
+                        return True
+                    else:
+                        self.logger.warning(f"Audio playback failed with {player}: {stderr.decode()}")
+                        continue
+            
+            self.logger.error("No working audio player found")
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"Audio playback error: {e}")
+            return False
+    
+    async def _check_command_exists(self, command: str) -> bool:
+        """Check if a command exists on the system"""
+        try:
+            process = await asyncio.create_subprocess_exec(
+                'which', command,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL
+            )
+            await process.communicate()
+            return process.returncode == 0
+        except Exception:
+            return False
     
     def start_server(self, host: str = "0.0.0.0", port: int = 8090):
         """Start the FastAPI server"""

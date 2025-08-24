@@ -55,8 +55,9 @@ python sentinel.py
 - **Resource Cleanup**: Proper shutdown handling for audio streams
 
 ### SentinelAPI Class  
-- **FastAPI Server**: Runs on port 8090 for remote audio recording
+- **FastAPI Server**: Runs on port 8090 for audio recording and playback
 - **Audio Recording**: On-demand WAV file generation via `/record` endpoint
+- **Audio Playback**: Receive and play audio files via `/play` endpoint
 - **File Serving**: Download recorded audio via `/audio/{session_id}`
 - **Health Monitoring**: `/health` endpoint for system status
 
@@ -114,7 +115,8 @@ payload = {
 1. Sentinel detects "Alan" in kitchen → Network signal to Orchestrator
 2. Orchestrator requests audio recording from kitchen sentinel
 3. Audio processed by AI Brain (RTX 3060) → Response generated  
-4. Response routed back to kitchen Pi for TTS playback
+4. Voice service synthesizes TTS audio → POST to kitchen Pi /play endpoint
+5. Sentinel plays audio through Pi speakers
 ```
 
 ## Dependencies and Requirements
