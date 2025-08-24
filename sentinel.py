@@ -6,8 +6,16 @@ import requests
 import yaml
 import logging
 import time
+import asyncio
+import threading
+import wave
 from pathlib import Path
 from typing import Dict, List, Optional
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+import uvicorn
 
 class WakeWordSentinel:
     def __init__(self, config_path: str = "config.yaml"):
@@ -164,12 +172,154 @@ class WakeWordSentinel:
         
         self.logger.info("Sentinel stopped")
 
+class RecordingRequest(BaseModel):
+    session_id: str
+    duration: float = 5.0
+    sample_rate: int = 16000
+
+class RecordingResponse(BaseModel):
+    session_id: str
+    status: str
+    message: str
+    file_path: Optional[str] = None
+
+class SentinelAPI:
+    def __init__(self, sentinel: WakeWordSentinel):
+        self.sentinel = sentinel
+        self.app = FastAPI(title="ALAN Sentinel Audio API")
+        self.recordings_dir = Path("recordings")
+        self.recordings_dir.mkdir(exist_ok=True)
+        
+        # Setup logging
+        self.logger = logging.getLogger(__name__)
+        
+        # Setup routes
+        self.setup_routes()
+    
+    def setup_routes(self):
+        @self.app.get("/health")
+        async def health():
+            return {"status": "healthy", "service": "sentinel"}
+        
+        @self.app.get("/audio/{session_id}")
+        async def get_audio(session_id: str):
+            """Download recorded audio file"""
+            audio_file = self.recordings_dir / f"{session_id}.wav"
+            
+            if not audio_file.exists():
+                raise HTTPException(status_code=404, detail="Audio file not found")
+            
+            return FileResponse(
+                path=str(audio_file),
+                media_type="audio/wav",
+                filename=f"{session_id}.wav"
+            )
+        
+        @self.app.post("/record", response_model=RecordingResponse)
+        async def record_audio(request: RecordingRequest):
+            """Record audio for the specified duration"""
+            try:
+                self.logger.info(f"Recording request: {request.session_id}, {request.duration}s")
+                
+                # Record audio
+                audio_file = await self.record_audio_clip(
+                    request.session_id,
+                    request.duration,
+                    request.sample_rate
+                )
+                
+                if audio_file:
+                    return RecordingResponse(
+                        session_id=request.session_id,
+                        status="success",
+                        message=f"Recorded {request.duration}s audio",
+                        file_path=str(audio_file)
+                    )
+                else:
+                    raise HTTPException(status_code=500, detail="Recording failed")
+                    
+            except Exception as e:
+                self.logger.error(f"Recording failed: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+    
+    async def record_audio_clip(self, session_id: str, duration: float, sample_rate: int) -> Optional[Path]:
+        """Record audio clip using the same PyAudio setup as wake word detection"""
+        try:
+            # We need to temporarily pause wake word detection to record
+            # For now, we'll create a separate audio stream for recording
+            
+            pa = pyaudio.PyAudio()
+            
+            # Create recording stream
+            stream = pa.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=sample_rate,
+                input=True,
+                frames_per_buffer=1024
+            )
+            
+            self.logger.info(f"Recording {duration}s of audio...")
+            
+            # Record audio
+            frames = []
+            chunk_size = 1024
+            sample_count = int(sample_rate * duration)
+            chunks_needed = sample_count // chunk_size
+            
+            for _ in range(chunks_needed):
+                data = stream.read(chunk_size, exception_on_overflow=False)
+                frames.append(data)
+            
+            # Stop and close stream
+            stream.stop_stream()
+            stream.close()
+            pa.terminate()
+            
+            # Save to WAV file
+            audio_file = self.recordings_dir / f"{session_id}.wav"
+            
+            with wave.open(str(audio_file), 'wb') as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(pa.get_sample_size(pyaudio.paInt16))
+                wf.setframerate(sample_rate)
+                wf.writeframes(b''.join(frames))
+            
+            self.logger.info(f"Audio recorded: {audio_file} ({audio_file.stat().st_size} bytes)")
+            return audio_file
+            
+        except Exception as e:
+            self.logger.error(f"Audio recording failed: {e}")
+            return None
+    
+    def start_server(self, host: str = "0.0.0.0", port: int = 8090):
+        """Start the FastAPI server"""
+        self.logger.info(f"Starting Sentinel API server on {host}:{port}")
+        uvicorn.run(self.app, host=host, port=port, log_level="info")
+
 def main():
     sentinel = WakeWordSentinel()
     
     try:
         sentinel.initialize()
+        
+        # Create API server
+        api = SentinelAPI(sentinel)
+        
+        # Start API server in a separate thread
+        server_thread = threading.Thread(
+            target=api.start_server,
+            kwargs={"host": "0.0.0.0", "port": 8090},
+            daemon=True
+        )
+        server_thread.start()
+        
+        # Give server time to start
+        time.sleep(2)
+        
+        # Start wake word detection (this will block)
         sentinel.listen()
+        
     except Exception as e:
         logging.error(f"Sentinel failed: {e}")
     finally:
