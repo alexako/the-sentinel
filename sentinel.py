@@ -148,9 +148,11 @@ class WakeWordSentinel:
                     wake_word = self.config['sentinel']['wake_words'][keyword_index]
                     self.logger.info(f"Wake word detected: {wake_word}")
                     
-                    # Play immediate audio feedback for nexus wake word
+                    # Play immediate audio feedback for wake words
                     if wake_word.lower() == 'nexus':
                         self._play_nexus_processing_sound()
+                    elif wake_word.lower() == 'alan':
+                        self._play_alan_processing_sound()
                     
                     # Notify orchestrator
                     self.notify_orchestrator(wake_word)
@@ -179,83 +181,26 @@ class WakeWordSentinel:
         self.logger.info("Sentinel stopped")
     
     def _play_nexus_processing_sound(self):
-        """Play futuristic processing sound immediately upon nexus wake word detection"""
+        """Play activation sound immediately upon nexus wake word detection"""
+        self._play_activation_sound()
+    
+    def _play_alan_processing_sound(self):
+        """Play activation sound for alan wake word"""
+        self._play_activation_sound()
+    
+    def _play_activation_sound(self):
+        """Play the activation sound from the shared directory"""
         try:
-            self.logger.info("Playing nexus processing sound...")
+            self.logger.info("Playing activation sound...")
             
-            # Generate the same futuristic sound effect as in orchestrator
-            import struct
-            import math
-            import tempfile
+            # Path to the activation sound file in the shared directory
+            activation_sound_path = Path("../shared/Activation1.wav")
             
-            sample_rate = 16000
-            duration = 0.5  # Shorter duration for immediate feedback
-            duration_samples = int(sample_rate * duration)
+            if not activation_sound_path.exists():
+                self.logger.error(f"Activation sound file not found: {activation_sound_path}")
+                return
             
-            # Create WAV header (44 bytes)
-            wav_header = bytearray(44)
-            
-            # RIFF header
-            wav_header[0:4] = b'RIFF'
-            # File size (filled later)
-            wav_header[8:12] = b'WAVE'
-            
-            # fmt chunk
-            wav_header[12:16] = b'fmt '
-            wav_header[16:20] = (16).to_bytes(4, 'little')  # chunk size
-            wav_header[20:22] = (1).to_bytes(2, 'little')   # PCM format
-            wav_header[22:24] = (1).to_bytes(2, 'little')   # mono
-            wav_header[24:28] = sample_rate.to_bytes(4, 'little')
-            wav_header[28:32] = (sample_rate * 2).to_bytes(4, 'little')  # byte rate
-            wav_header[32:34] = (2).to_bytes(2, 'little')   # block align
-            wav_header[34:36] = (16).to_bytes(2, 'little')  # bits per sample
-            
-            # data chunk header
-            wav_header[36:40] = b'data'
-            data_size = duration_samples * 2  # 16-bit samples
-            file_size = len(wav_header) + data_size - 8
-            
-            # Update file size in header
-            wav_header[4:8] = file_size.to_bytes(4, 'little')
-            wav_header[40:44] = data_size.to_bytes(4, 'little')
-            
-            # Generate futuristic processing sound effect
-            audio_data = bytearray()
-            for i in range(duration_samples):
-                time_position = i / sample_rate
-                
-                if time_position < 0.2:  # First 0.2s: rising sweep
-                    frequency = 200 + (600 * time_position / 0.2)  # 200Hz to 800Hz sweep
-                    amplitude = 1200 * (time_position / 0.2)  # Fade in (slightly louder for Pi speakers)
-                elif time_position < 1.0:  # Next 0.8s: pulsing high-tech tone
-                    frequency = 800 + 200 * math.sin(2 * math.pi * 3 * time_position)  # Modulated 800Hz
-                    pulse = 0.7 + 0.3 * math.sin(2 * math.pi * 8 * time_position)  # Pulsing envelope
-                    amplitude = 900 * pulse  # Louder for Pi speakers
-                elif time_position < duration - 0.3:  # Middle section: subtle processing hum
-                    frequency = 300 + 50 * math.sin(2 * math.pi * 0.5 * time_position)  # Slow modulation
-                    amplitude = 400  # Quiet background hum
-                else:  # Last 0.3s: fade out with descending tone
-                    remaining = (duration - time_position) / 0.3
-                    frequency = 400 * remaining  # Descending tone
-                    amplitude = 500 * remaining  # Fade out
-                
-                # Generate the waveform (sounds like sci-fi computer processing)
-                sample_value = int(amplitude * math.sin(2 * math.pi * frequency * time_position))
-                
-                # Clamp to 16-bit range
-                sample_value = max(-32767, min(32767, sample_value))
-                
-                # Convert to 16-bit signed integer, little-endian
-                audio_data.extend(struct.pack('<h', sample_value))
-            
-            # Write to temporary file and play
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
-                temp_file.write(wav_header)
-                temp_file.write(audio_data)
-                temp_file_path = temp_file.name
-            
-            # Play the sound using system audio player (non-blocking)
-            # Try multiple players in order of preference for Pi
+            # Try multiple audio players in order of preference
             players = ['aplay', 'paplay', 'cvlc', 'mpg123']
             
             for player in players:
@@ -263,36 +208,27 @@ class WakeWordSentinel:
                     if player == 'aplay':
                         result = subprocess.run(['which', 'aplay'], capture_output=True)
                         if result.returncode == 0:
-                            subprocess.Popen(['aplay', temp_file_path], 
+                            subprocess.Popen(['aplay', str(activation_sound_path)], 
                                            stdout=subprocess.DEVNULL, 
                                            stderr=subprocess.DEVNULL)
-                            self.logger.info("Nexus processing sound played with aplay")
-                            break
+                            self.logger.info("Activation sound played with aplay")
+                            return
                     elif player == 'paplay':
                         result = subprocess.run(['which', 'paplay'], capture_output=True)
                         if result.returncode == 0:
-                            subprocess.Popen(['paplay', temp_file_path], 
+                            subprocess.Popen(['paplay', str(activation_sound_path)], 
                                            stdout=subprocess.DEVNULL, 
                                            stderr=subprocess.DEVNULL)
-                            self.logger.info("Nexus processing sound played with paplay")
-                            break
+                            self.logger.info("Activation sound played with paplay")
+                            return
                 except Exception as e:
                     self.logger.debug(f"Failed to play with {player}: {e}")
                     continue
             
-            # Clean up temp file after a delay (async cleanup)
-            def cleanup_temp_file():
-                import os
-                time.sleep(duration + 1)  # Wait for playback to finish
-                try:
-                    os.unlink(temp_file_path)
-                except:
-                    pass
-            
-            threading.Thread(target=cleanup_temp_file, daemon=True).start()
+            self.logger.warning("No working audio player found for activation sound")
             
         except Exception as e:
-            self.logger.error(f"Failed to play nexus processing sound: {e}")
+            self.logger.error(f"Failed to play activation sound: {e}")
 
 class RecordingRequest(BaseModel):
     session_id: str

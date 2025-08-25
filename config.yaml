@@ -2,7 +2,7 @@ sentinel:
   # Wake word configuration
   wake_words:
     - "nexus"   # Custom model in ../shared/wake_words/nexus.ppn
-    # - "alan"  # TODO: Add when alan.ppn model is available
+    - "alan"    # Custom model in ../shared/wake_words/alan.ppn
   
   # Audio configuration
   audio:
