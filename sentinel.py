@@ -189,7 +189,7 @@ class WakeWordSentinel:
             import tempfile
             
             sample_rate = 16000
-            duration = 2.5  # Shorter duration for immediate feedback
+            duration = 0.5  # Shorter duration for immediate feedback
             duration_samples = int(sample_rate * duration)
             
             # Create WAV header (44 bytes)
